@@ -5,6 +5,9 @@ import time
 import rumps
 import os
 
+LG_MONITOR_CONTROL_VID = 0x043E
+LG_MONITOR_CONTROL_PID = 0x9A39
+
 # 0 - no split
 # 1 - left-right half and half
 # 2 - top-bottom half and half
@@ -20,7 +23,10 @@ import os
 # C - also three-way?
 # D - Quad split
 # E - invalid
-LG_SPLIT_TOP_BOTTOM = 2
+LG_SPLIT_NONE = 0x0
+LG_SPLIT_LEFT_RIGHT_HALF_HALF = 0x1
+LG_SPLIT_TOP_BOTTOM = 0x2
+LG_SPLIT_FIX_AUDIO = 0xE
 
 # Split sound source
 LG_SOUND_MAIN = 0
@@ -105,55 +111,8 @@ class LgUsbMonitorControl:
         self.ep_out = None
 
     def init_usb(self):
-        # find our device
-        '''
-        self.dev = usb.core.find(idVendor=0x043e) #, idProduct=0x0183
-
-        # was it found?
-        if self.dev is None:
-            raise ValueError('Device not found')
-
-        #dev.reset()
-
-        # set the active configuration. With no arguments, the first
-        # configuration will be the active one
-        self.dev.set_configuration()
-
-        # get an endpoint instance
-        cfg = self.dev.get_active_configuration()
-        intf = None
-        for i in range(0, 10):
-            intf = cfg[(i,0)]
-            break
-
-        self.ep_out = usb.util.find_descriptor(
-            intf,
-            # match the first OUT endpoint
-            custom_match = \
-            lambda e: \
-                usb.util.endpoint_direction(e.bEndpointAddress) == \
-                usb.util.ENDPOINT_OUT)
-
-        self.ep_in = usb.util.find_descriptor(
-            intf,
-            # match the first OUT endpoint
-            custom_match = \
-            lambda e: \
-                usb.util.endpoint_direction(e.bEndpointAddress) == \
-                usb.util.ENDPOINT_IN)
-
-        try:
-            self.ep_out.clear_halt()
-        except:
-            a='a'
-
-        try:
-            self.ep_in.clear_halt()
-        except:
-            a='a'
-        '''
         self.dev = hid.device()
-        self.dev.open(0x043E, 0x9a39)
+        self.dev.open(LG_MONITOR_CONTROL_VID, LG_MONITOR_CONTROL_PID)
 
         self.has_usb = True
 
@@ -273,10 +232,9 @@ class LgUsbMonitorControl:
             self.send_raw(wrapped)
         
             data_tmp = self.read_raw(0x100)
-            #hex_dump(data_tmp)
+
             amt_gotten = data_tmp[0] - 4
             needed -= amt_gotten
-            #print(needed, amt_gotten)
             
             data += data_tmp[4:4+amt_gotten]
 
@@ -289,8 +247,6 @@ class LgUsbMonitorControl:
         data = data + [sum]
         wrapped[4] += len(data)
         wrapped += data
-        
-        #hex_dump(wrapped)
 
         self.send_raw(wrapped)
         wrapped[1] = 0x02
@@ -298,7 +254,6 @@ class LgUsbMonitorControl:
         wrapped[4] = 0x0b
         wrapped[6] = 0x0b
         self.send_raw(wrapped)
-        #hex_dump(wrapped)
 
         return wrapped
 
@@ -318,7 +273,7 @@ class LgUsbMonitorControl:
                 data_len =len(data)-5-2
 
             test = msg_checksum(data[5:5+data_len+2])
-            #hex_dump(data[5:5+data_len+1])
+
             if (test == 0 and data[6] == 2 and data[8] == idx):
                 return data[13] | data[12] << 8
             time.sleep(0.1)
@@ -329,9 +284,6 @@ class LgUsbMonitorControl:
         
             self.wrap_send_vcp_2([0x03, idx,(val >> 8) & 0xFF,(val >> 0) & 0xFF])
             
-            #hex_dump (self.read_raw())
-            
-            #self.send_raw(test_send_5)
             data = self.read_raw()
             #hex_dump(data)
             if (len(data) < 8):
@@ -343,7 +295,7 @@ class LgUsbMonitorControl:
                 data_len =len(data)-5-2
 
             test = msg_checksum(data[5:5+data_len+2])
-            #hex_dump(data[5:5+data_len+1])
+
             if (test == 0 and data[8] == idx):
                 return data[13]
             time.sleep(0.1)
@@ -364,10 +316,6 @@ class LgUsbMonitorControl:
             if data_len > len(data)-5-2:
                 data_len =len(data)-5-2
 
-            #test = msg_checksum(data[5:5+data_len+2])
-            #hex_dump(data)
-            #print(hex(test))
-            #if (test == 0):
             if data[2] == 0x55:
                 return data
         return bytes([])
@@ -380,20 +328,7 @@ class LgUsbMonitorControl:
         return data
 
     def lg_special_cc_data(self, idx, val):
-        for i in range(0, 1):
-
-            #data = self.wrap_send_vcp_4([0x03,idx,(val >> 8) & 0xFF, val & 0xFF], 0x84, 0x50)
-            #data = self.wrap_send_vcp_4([0x03,0xe7,(val >> 8) & 0xFF, val & 0xFF], 0x82, 0x50)
-            data = self.wrap_send_vcp_4([0xcc,idx] + val, 0)
-            #self.wrap_send_vcp_2([1, idx,0,0,0,0,0])
-            #self.send_raw(test_send_3)
-            #self.send_raw(test_send_4)
-            
-            #hex_dump (self.read_raw())
-            
-            
-        #return data[0x17:]
-        #hex_dump(data)
+        data = self.wrap_send_vcp_4([0xcc,idx] + val, 0)
         return data
     
     def lg_special_cc_u32(self, idx, val):
@@ -470,7 +405,7 @@ class LgUsbMonitorControl:
         self.lg_arbwrite_u8(MONITOR_INFO_STRUCT+0x2d1, val & 0xFF)
 
     def lg_set_split(self, val):
-        if val > 0xE:
+        if val > LG_SPLIT_FIX_AUDIO:
             return
         if self.lg_get_split() == val:
             return
@@ -507,7 +442,7 @@ class AwesomeStatusBarApp(rumps.App):
     def single_pane(self, _):
         #device.lg_set_cur_monitor_sound(0)
         #device.lg_set_split(0x1)
-        device.lg_set_split(0x0)
+        device.lg_set_split(LG_SPLIT_NONE)
         print(device.lg_get_split())
 
     @rumps.clicked("⊟\tTop-Bottom")
@@ -522,7 +457,7 @@ class AwesomeStatusBarApp(rumps.App):
         next_source = swap_lut[cur & 1]
         device.lg_set_cur_monitor_sound(next_source)
         print (next_source)
-        device.lg_set_split(0xE)
+        device.lg_set_split(LG_SPLIT_FIX_AUDIO)
         #print(device.get_vcp(0xd7))
 
     @rumps.clicked("⊟⇆\tSwap splits")
