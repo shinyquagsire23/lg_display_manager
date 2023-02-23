@@ -5,3 +5,4 @@ This is the script which I use to manage my LG DualUp 28MQ780 monitor, and only 
 ## Sister repositories:
  - https://github.com/shinyquagsire23/ghidra-aeon - SLEIGH grammars for the AEON R2 found in the MStar SoC in the LG DualUp
  - https://github.com/shinyquagsire23/mstar_extract_decompress - Extracts the LG firmware in particular
+ - https://gist.github.com/shinyquagsire23/7ddd17d1569acb21920683866570cb35 - My disorganized notes

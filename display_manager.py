@@ -13,7 +13,7 @@ LG_MONITOR_CONTROL_PID = 0x9A39
 # 2 - top-bottom half and half
 # 3 - left-right 3/4 and 1/4
 # 4 - left-right 1/4 and 3/4
-# 5 - left-right 23 and 1/3
+# 5 - left-right 2/3 and 1/3
 # 6 - 1:1 PIP top left
 # 7 - 1:1 PIP top right
 # 8 - 1:1 PIP bottom left
@@ -26,6 +26,17 @@ LG_MONITOR_CONTROL_PID = 0x9A39
 LG_SPLIT_NONE = 0x0
 LG_SPLIT_LEFT_RIGHT_HALF_HALF = 0x1
 LG_SPLIT_TOP_BOTTOM = 0x2
+LG_SPLIT_LEFT_RIGHT_3_4__1_4 = 0x3
+LG_SPLIT_LEFT_RIGHT_1_4__3_4 = 0x4
+LG_SPLIT_LEFT_RIGHT_2_3__1_3 = 0x5
+LG_SPLIT_SQUARE_PIP_TOP_LEFT = 0x6
+LG_SPLIT_SQUARE_PIP_TOP_RIGHT = 0x7
+LG_SPLIT_SQUARE_PIP_BOTTOM_LEFT = 0x8
+LG_SPLIT_SQUARE_PIP_BOTTOM_RIGHT = 0x9
+LG_SPLIT_PIP_16_9 = 0xA
+LG_SPLIT_THREE_WAY_SPLIT = 0xB
+LG_SPLIT_THREE_WAY_SPLIT_2 = 0xC
+LG_SPLIT_QUAD_SPLIT = 0xD
 LG_SPLIT_FIX_AUDIO = 0xE
 
 # Split sound source
@@ -59,6 +70,8 @@ VCP_D7_GET_1 = 0x0029ef6f
 VCP_52_GET_1 = 0x0029f033
 VCP_52_GET_2 = 0x0029f02c
 BIG_U32_ADDR = 0x0053b5c0
+
+VCP_83_GET_1 = 0x0029f24b
 
 SPLIT_5_ADDR = 0x002ee2de
 SPLIT_3_ADDR = 0x002ee2fa
@@ -479,6 +492,88 @@ class AwesomeStatusBarApp(rumps.App):
         device.lg_set_cur_secondary(LG_MONITOR_HDMI2)
         device.lg_set_split(LG_SPLIT_TOP_BOTTOM)
 
+#
+# Verifying that my AEON R2 SLEIGH is correct
+#
+def test_conditional(val_a, val_b):
+    '''
+switchD_0029eca1::caseD_83                      XREF[2]:     0029eca1(j), 003a3f94(*)  
+        0029f24b 50 60 ff        bn.ori     r3,r0,0xff
+        0029f24e 50 80 ff        bn.ori     r4,r0,0xff
+        0029f251 d0 60 00 38     bg.blei    r3,0x0,LAB_0029f258
+        0029f255 50 60 00        bn.ori     r3,r0,0x0
+                             LAB_0029f258                                    XREF[1]:     0029f251(j)  
+        0029f258 18 61 15        bn.sbz     0x15(r1),r3
+        0029f25b 40 00 04        bn.nop
+
+    '''
+    setflag_bg = False
+    setflag_bn = False
+    opcode_bn = True
+    branch_bn = False
+    immediate = True
+    if val_a & 0x10:
+        val_a |= 0xFFFFFFE0
+    if val_b & 0x10:
+        val_b |= 0xFFFFFFE0
+
+    device.lg_arbwrite_u24_be(VCP_83_GET_1+0, 0x1c6000 | (val_a & 0xFF)) # bn.addi r3,r0,immA
+    device.lg_arbwrite_u24_be(VCP_83_GET_1+3, 0x1c8000 | (val_b & 0xFF)) # bn.addi r3,r0,immB
+    which = 0
+    if setflag_bg:
+        if val_b & 0x10:
+            val_b |= 0xFFFFFFE0
+        device.lg_arbwrite_u32_be(VCP_83_GET_1+6, 0xc0600000 | ((val_b & 0xffff) << 5) | (which << 1)) # bg.sfeqi r3,0
+        device.lg_arbwrite_u24_be(VCP_83_GET_1+10, 0x486103) # bn.cmovi     r3,0x1,0x0
+    elif setflag_bn:
+        if val_b & 0x10:
+            val_b |= 0xFFFFFFE0
+        device.lg_arbwrite_u24_be(VCP_83_GET_1+6, 0x5c6001 | ((val_b & 0xff) << 5) | (which << 1)) # bn.sfeqi r3,0
+        device.lg_arbwrite_u24_be(VCP_83_GET_1+9, 0x486103) # bn.cmovi     r3,0x1,0x0
+    elif branch_bn:
+        if immediate:
+            device.lg_arbwrite_u24_be(VCP_83_GET_1+6, 0x246018 | ((val_b & 0x7) << 10) | which) # bn.blesi r3,val,LAB_0029f258
+            device.lg_arbwrite_u24_be(VCP_83_GET_1+9, 0x506055) # bn.ori     r3,r0,0x55
+        else:
+            device.lg_arbwrite_u24_be(VCP_83_GET_1+6, 0x206018 | which) # bg.bles r3,r4,LAB_0029f258
+            device.lg_arbwrite_u24_be(VCP_83_GET_1+9, 0x506055) # bn.ori     r3,r0,0x55
+    elif opcode_bn:
+        #device.lg_arbwrite_u24_be(VCP_83_GET_1+6, 0x446320 | which) # bn.op... r3,r3,r4
+        device.lg_arbwrite_u24_be(VCP_83_GET_1+6, 0x146700 | which) # bn.op... r3,r3,r4
+        device.lg_arbwrite_u24_be(VCP_83_GET_1+9, 0x400004) # nop
+        #device.lg_arbwrite_u24_be(VCP_83_GET_1+9, 0x486103) # bn.cmovi     r3,0x1,0x0
+    else:
+        if immediate:
+            device.lg_arbwrite_u32_be(VCP_83_GET_1+6, 0xd0600038 | ((val_b & 0x1F) << 16) | which) # bg.blesi r3,val,LAB_0029f258
+            device.lg_arbwrite_u24_be(VCP_83_GET_1+10, 0x506055) # bn.ori     r3,r0,0x55
+        else:
+            device.lg_arbwrite_u32_be(VCP_83_GET_1+6, 0xd4640038 | which) # bg.bles r3,r4,LAB_0029f258
+            device.lg_arbwrite_u24_be(VCP_83_GET_1+10, 0x506055) # bn.ori     r3,r0,0x55
+    
+    if not setflag_bn and not branch_bn and not opcode_bn:
+        device.lg_arbwrite_u24_be(VCP_83_GET_1+13, 0x186115) # bn.sbz     0x15(r1),r3
+        device.lg_arbwrite_u24_be(VCP_83_GET_1+16, 0x400004)
+        device.lg_arbwrite_u24_be(VCP_83_GET_1+19, 0x400004)
+    else:
+        device.lg_arbwrite_u24_be(VCP_83_GET_1+12, 0x186115) # bn.sbz     0x15(r1),r3
+        device.lg_arbwrite_u16_be(VCP_83_GET_1+15, 0x8001)
+        device.lg_arbwrite_u16_be(VCP_83_GET_1+17, 0x8001)
+        device.lg_arbwrite_u24_be(VCP_83_GET_1+19, 0x400004)
+        
+
+
+
+    # Attempt to get the caches to stahp
+    scalar_fw_version = device.lg_special(0xc9,0)[4:4+3]
+    model_str = bytes(device.lg_special(0xca,0)[4:4+7])
+
+    val = device.get_vcp(0x83)
+
+    if setflag_bn or setflag_bg or opcode_bn:
+        return val
+    else:
+        return 0 if val == 0x55 else 1
+
 def run_patches():
     #
     # Patch VCP 0xD7 setter to just send raw split values:
@@ -491,7 +586,6 @@ def run_patches():
 
     # And everything else is just directly raw
     device.lg_arbwrite_u32_be(VCP_D7_SET_1+8, 0xe4000cfb) # bg.j LAB_002ee2e6
-    #device.lg_arbwrite_u32_be(VCP_D7_SET_2+0, 0xd4eac49a) # bg.beq    r7,r10,...
     device.lg_arbwrite_u16_be(VCP_D7_SET_2+0, 0x8001) # bt.nop
     device.lg_arbwrite_u16_be(VCP_D7_SET_2+2, 0x8001) # bt.nop
 
@@ -569,6 +663,22 @@ if __name__ == "__main__":
                 device.lg_reset_monitor()
                 exit(1)
             print ("Trying again...")
+
+    #print(hex(device.lg_arbread_u32(0x0042ac30)))
+
+    '''
+    for i in range(0, 0x2):
+        for j in range(0, 0x20):
+            val = test_conditional(i, j)
+            print (hex(i), hex(j), hex(val))
+
+    for i in range(0x1E, 0x20):
+        for j in range(0, 0x20):
+            val = test_conditional(i, j)
+            print (hex(i), hex(j), hex(val))
+            
+    exit(1)
+    '''
 
     '''
     print ("Fetch 1")
