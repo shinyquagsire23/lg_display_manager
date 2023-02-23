@@ -129,6 +129,10 @@ class LgUsbMonitorControl:
 
         self.has_usb = True
 
+    def fix_connection(self):
+        self.init_usb()
+        run_patches()
+
     def send_raw(self, pkt):
         if not self.has_usb:
             return
@@ -137,6 +141,7 @@ class LgUsbMonitorControl:
             self.dev.write(bytes(pkt + [0] * (0x40 - len(pkt))))
         except Exception as e:
             print ("Failed to write", e)
+            self.fix_connection()
 
     def read_raw(self, amt=0x40):
         if not self.has_usb:
@@ -146,6 +151,8 @@ class LgUsbMonitorControl:
             return bytes(self.dev.read(amt, 200))
         except Exception as e:
             print ("Failed to read", e)
+            self.fix_connection()
+
         return []
 
     def wrap_send_vcp(self, data):
@@ -449,6 +456,7 @@ class LgUsbMonitorControl:
 @rumps.timer(1)
 def fix_displays_and_mouse(sender):
     os.system("fix_displays_and_mouse.sh")
+    device.get_vcp(0x10) # heartbeat to trigger USB fixups
 
 class AwesomeStatusBarApp(rumps.App):
     @rumps.clicked("□\tNo split")
