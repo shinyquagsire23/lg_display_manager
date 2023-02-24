@@ -461,9 +461,9 @@ def fix_displays_and_mouse(sender):
     os.system("fix_displays_and_mouse.sh")
     device.get_vcp(0x10) # heartbeat to trigger USB fixups
 
-    for i in range(0, 0x10):
-        print (hex(i), hex(device.lg_arbread_u32(0x005445d4+i*0x24)))
-    print (hex(device.lg_arbread_u32(0x00544a5c)))
+    #for i in range(0, 0x10):
+    #    print (hex(i), hex(device.lg_arbread_u32(0x005445d4+i*0x24)))
+    #print (hex(device.lg_arbread_u32(0x00544a5c)))
     
 
     # Sometimes writes get dropped...
