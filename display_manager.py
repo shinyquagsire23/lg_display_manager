@@ -67,11 +67,14 @@ VCP_D7_SET_5 = 0x002ee2b2
 
 VCP_D7_GET_1 = 0x0029ef6f
 
-VCP_52_GET_1 = 0x0029f033
-VCP_52_GET_2 = 0x0029f02c
 BIG_U32_ADDR = 0x0053b5c0
 
 VCP_83_GET_1 = 0x0029f24b
+
+DDC_50_D1_1 = 0x00297c45
+DDC_50_D5_1 = 0x002977f9
+DDC_50_DEFAULT_CASE = 0x00297778
+DDC_50_SWITCHTABLE = 0x003a3278
 
 SPLIT_5_ADDR = 0x002ee2de
 SPLIT_3_ADDR = 0x002ee2fa
@@ -329,7 +332,7 @@ class LgUsbMonitorControl:
             data = device.read_raw()
             #hex_dump(data)
             if (len(data) < 8):
-                hex_dump(data)
+                #hex_dump(data)
                 continue
             
             data_len = data[5] & 0x7F
@@ -339,6 +342,44 @@ class LgUsbMonitorControl:
             if data[2] == 0x55:
                 return data
         return bytes([])
+
+    def lg_special_u32(self, idx, val):
+        for i in range(0, 10):
+
+            self.wrap_send_vcp_3(list(struct.pack("<BB", 0x03, idx))+list(struct.pack(">L",val)), 0x26)
+
+            data = device.read_raw()
+            #hex_dump(data)
+            if (len(data) < 8):
+                hex_dump(data)
+                continue
+            
+            data_len = data[5] & 0x7F
+            if data_len > len(data)-5-2:
+                data_len =len(data)-5-2
+
+            if data[2] == 0x55:
+                return data
+        return bytes([0,0,0,0,0,0,0,0,0,0])
+
+    def lg_special_u32_u8(self, idx, val, val2):
+        for i in range(0, 10):
+
+            self.wrap_send_vcp_3(list(struct.pack("<BB", 0x03, idx))+list(struct.pack(">LB",val,val2)), 0x26)
+
+            data = device.read_raw()
+            #hex_dump(data)
+            if (len(data) < 8):
+                hex_dump(data)
+                continue
+            
+            data_len = data[5] & 0x7F
+            if data_len > len(data)-5-2:
+                data_len =len(data)-5-2
+
+            if data[2] == 0x55:
+                return data
+        return bytes([0,0,0,0,0,0,0,0,0,0])
 
     def lg_special_f3(self, val):
         for i in range(0, 1):
@@ -355,6 +396,7 @@ class LgUsbMonitorControl:
         data = self.wrap_send_vcp_4([0xcc,idx,val & 0xFF, (val >> 8) & 0xFF, (val >> 16) & 0xFF, (val >>24) & 0xFF], 0)
         return data
     
+    # Not atomic
     def lg_arbwrite_str16(self, addr, val):
         self.lg_arbwrite(addr, list(val.encode("utf-16"))[2:] + [0,0])
     
@@ -382,6 +424,34 @@ class LgUsbMonitorControl:
         self.lg_special_cc_u32(0xf6, addr)
         self.lg_special_cc_data(0xf4, val)
 
+    # Atomic
+    def my_arbwrite_str16(self, addr, val):
+        self.my_arbwrite(addr, list(val.encode("utf-16"))[2:] + [0,0])
+    
+    def my_arbwrite_u32(self, addr, val):
+        self.my_arbwrite(addr, list(struct.pack("<L", val)))
+    
+    def my_arbwrite_u16(self, addr, val):
+        self.my_arbwrite(addr, list(struct.pack("<H", val)))
+    
+    def my_arbwrite_u8(self, addr, val):
+        self.my_arbwrite(addr, [val & 0xFF])
+    
+    def my_arbwrite_u32_be(self, addr, val):
+        self.my_arbwrite(addr, list(struct.pack(">L", val)))
+
+    def my_arbwrite_u24_be(self, addr, val):
+        self.my_arbwrite_u16_be(addr, val>>8)
+        self.my_arbwrite_u8(addr+2, val & 0xFF)
+        
+    def my_arbwrite_u16_be(self, addr, val):
+        self.my_arbwrite(addr, list(struct.pack(">H", val)))
+    
+    def my_arbwrite(self, addr, val):
+        for i in range(0, len(val)):
+            self.lg_special_u32_u8(0xd5, addr+i, val[i])
+
+    # Also atomic
     def lg_arbread_u32(self, addr):
         return struct.unpack("<L", bytes(self.lg_arbread_data(addr, 4)))[0]
 
@@ -395,22 +465,26 @@ class LgUsbMonitorControl:
         return struct.unpack(">H", bytes(self.lg_arbread_data(addr, 2)))[0]
 
     def lg_arbread_u8(self, addr):
-        self.lg_special_cc_u32(0xf6, addr)
-        self.lg_special_cc_u32(0xf6, addr)
-        return self.get_vcp(0x52)
+        data = device.lg_special_u32(0xd1, addr)
+        val = data[5]
+        while data[4] != 0x82:
+            data = device.lg_special_u32(0xd1, addr)
+            val = data[5]
+        return val
 
     def lg_arbread_data(self, addr, data_len):
         vals = []
         for i in range(0, data_len):
-            #print (hex(i))
-            vals += [self.lg_arbread_u8(addr+i)]
+            val = self.lg_arbread_u8(addr+i)
+            #print (hex(i),hex(val))
+            vals += [val]
         return vals
 
     def lg_get_cur_monitor_sound(self):
         return self.lg_arbread_u8(MONITOR_INFO_STRUCT+0x2b5)
 
     def lg_set_cur_monitor_sound(self, val):
-        self.lg_arbwrite_u8(MONITOR_INFO_STRUCT+0x2b5, val & 0xFF)
+        self.my_arbwrite_u8(MONITOR_INFO_STRUCT+0x2b5, val & 0xFF)
 
     def lg_get_cur_primary(self):
         return self.lg_arbread_u8(MONITOR_INFO_STRUCT+0x2d0)
@@ -419,10 +493,10 @@ class LgUsbMonitorControl:
         return self.lg_arbread_u8(MONITOR_INFO_STRUCT+0x2d1)
 
     def lg_set_cur_primary(self, val):
-        self.lg_arbwrite_u8(MONITOR_INFO_STRUCT+0x2d0, val & 0xFF)
+        self.my_arbwrite_u8(MONITOR_INFO_STRUCT+0x2d0, val & 0xFF)
 
     def lg_set_cur_secondary(self, val):
-        self.lg_arbwrite_u8(MONITOR_INFO_STRUCT+0x2d1, val & 0xFF)
+        self.my_arbwrite_u8(MONITOR_INFO_STRUCT+0x2d1, val & 0xFF)
 
     def lg_set_split(self, val):
         if val > LG_SPLIT_FIX_AUDIO:
@@ -457,6 +531,16 @@ class LgUsbMonitorControl:
 def fix_displays_and_mouse(sender):
     os.system("fix_displays_and_mouse.sh")
     device.get_vcp(0x10) # heartbeat to trigger USB fixups
+
+    # Sometimes writes get dropped...
+    # The CC commands do not return *anything* so there's no way to know
+    # until the arbread patch goes through.
+    for i in range(0, 10):
+        run_patches()
+
+        val = device.lg_arbread_u32_be(VCP_D7_SET_1+0)
+        if val == 0xd140326a:
+            break
 
 class AwesomeStatusBarApp(rumps.App):
     @rumps.clicked("□\tNo split")
@@ -525,48 +609,48 @@ switchD_0029eca1::caseD_83                      XREF[2]:     0029eca1(j), 003a3f
     if val_b & 0x10:
         val_b |= 0xFFFFFFE0
 
-    device.lg_arbwrite_u24_be(VCP_83_GET_1+0, 0x1c6000 | (val_a & 0xFF)) # bn.addi r3,r0,immA
-    device.lg_arbwrite_u24_be(VCP_83_GET_1+3, 0x1c8000 | (val_b & 0xFF)) # bn.addi r3,r0,immB
+    device.my_arbwrite_u24_be(VCP_83_GET_1+0, 0x1c6000 | (val_a & 0xFF)) # bn.addi r3,r0,immA
+    device.my_arbwrite_u24_be(VCP_83_GET_1+3, 0x1c8000 | (val_b & 0xFF)) # bn.addi r3,r0,immB
     which = 0
     if setflag_bg:
         if val_b & 0x10:
             val_b |= 0xFFFFFFE0
-        device.lg_arbwrite_u32_be(VCP_83_GET_1+6, 0xc0600000 | ((val_b & 0xffff) << 5) | (which << 1)) # bg.sfeqi r3,0
-        device.lg_arbwrite_u24_be(VCP_83_GET_1+10, 0x486103) # bn.cmovi     r3,0x1,0x0
+        device.my_arbwrite_u32_be(VCP_83_GET_1+6, 0xc0600000 | ((val_b & 0xffff) << 5) | (which << 1)) # bg.sfeqi r3,0
+        device.my_arbwrite_u24_be(VCP_83_GET_1+10, 0x486103) # bn.cmovi     r3,0x1,0x0
     elif setflag_bn:
         if val_b & 0x10:
             val_b |= 0xFFFFFFE0
-        device.lg_arbwrite_u24_be(VCP_83_GET_1+6, 0x5c6001 | ((val_b & 0xff) << 5) | (which << 1)) # bn.sfeqi r3,0
-        device.lg_arbwrite_u24_be(VCP_83_GET_1+9, 0x486103) # bn.cmovi     r3,0x1,0x0
+        device.my_arbwrite_u24_be(VCP_83_GET_1+6, 0x5c6001 | ((val_b & 0xff) << 5) | (which << 1)) # bn.sfeqi r3,0
+        device.my_arbwrite_u24_be(VCP_83_GET_1+9, 0x486103) # bn.cmovi     r3,0x1,0x0
     elif branch_bn:
         if immediate:
-            device.lg_arbwrite_u24_be(VCP_83_GET_1+6, 0x246018 | ((val_b & 0x7) << 10) | which) # bn.blesi r3,val,LAB_0029f258
-            device.lg_arbwrite_u24_be(VCP_83_GET_1+9, 0x506055) # bn.ori     r3,r0,0x55
+            device.my_arbwrite_u24_be(VCP_83_GET_1+6, 0x246018 | ((val_b & 0x7) << 10) | which) # bn.blesi r3,val,LAB_0029f258
+            device.my_arbwrite_u24_be(VCP_83_GET_1+9, 0x506055) # bn.ori     r3,r0,0x55
         else:
-            device.lg_arbwrite_u24_be(VCP_83_GET_1+6, 0x206018 | which) # bg.bles r3,r4,LAB_0029f258
-            device.lg_arbwrite_u24_be(VCP_83_GET_1+9, 0x506055) # bn.ori     r3,r0,0x55
+            device.my_arbwrite_u24_be(VCP_83_GET_1+6, 0x206018 | which) # bg.bles r3,r4,LAB_0029f258
+            device.my_arbwrite_u24_be(VCP_83_GET_1+9, 0x506055) # bn.ori     r3,r0,0x55
     elif opcode_bn:
-        #device.lg_arbwrite_u24_be(VCP_83_GET_1+6, 0x446320 | which) # bn.op... r3,r3,r4
-        device.lg_arbwrite_u24_be(VCP_83_GET_1+6, 0x146700 | which) # bn.op... r3,r3,r4
-        device.lg_arbwrite_u24_be(VCP_83_GET_1+9, 0x400004) # nop
-        #device.lg_arbwrite_u24_be(VCP_83_GET_1+9, 0x486103) # bn.cmovi     r3,0x1,0x0
+        #device.my_arbwrite_u24_be(VCP_83_GET_1+6, 0x446320 | which) # bn.op... r3,r3,r4
+        device.my_arbwrite_u24_be(VCP_83_GET_1+6, 0x146700 | which) # bn.op... r3,r3,r4
+        device.my_arbwrite_u24_be(VCP_83_GET_1+9, 0x400004) # nop
+        #device.my_arbwrite_u24_be(VCP_83_GET_1+9, 0x486103) # bn.cmovi     r3,0x1,0x0
     else:
         if immediate:
-            device.lg_arbwrite_u32_be(VCP_83_GET_1+6, 0xd0600038 | ((val_b & 0x1F) << 16) | which) # bg.blesi r3,val,LAB_0029f258
-            device.lg_arbwrite_u24_be(VCP_83_GET_1+10, 0x506055) # bn.ori     r3,r0,0x55
+            device.my_arbwrite_u32_be(VCP_83_GET_1+6, 0xd0600038 | ((val_b & 0x1F) << 16) | which) # bg.blesi r3,val,LAB_0029f258
+            device.my_arbwrite_u24_be(VCP_83_GET_1+10, 0x506055) # bn.ori     r3,r0,0x55
         else:
-            device.lg_arbwrite_u32_be(VCP_83_GET_1+6, 0xd4640038 | which) # bg.bles r3,r4,LAB_0029f258
-            device.lg_arbwrite_u24_be(VCP_83_GET_1+10, 0x506055) # bn.ori     r3,r0,0x55
+            device.my_arbwrite_u32_be(VCP_83_GET_1+6, 0xd4640038 | which) # bg.bles r3,r4,LAB_0029f258
+            device.my_arbwrite_u24_be(VCP_83_GET_1+10, 0x506055) # bn.ori     r3,r0,0x55
     
     if not setflag_bn and not branch_bn and not opcode_bn:
-        device.lg_arbwrite_u24_be(VCP_83_GET_1+13, 0x186115) # bn.sbz     0x15(r1),r3
-        device.lg_arbwrite_u24_be(VCP_83_GET_1+16, 0x400004)
-        device.lg_arbwrite_u24_be(VCP_83_GET_1+19, 0x400004)
+        device.my_arbwrite_u24_be(VCP_83_GET_1+13, 0x186115) # bn.sbz     0x15(r1),r3
+        device.my_arbwrite_u24_be(VCP_83_GET_1+16, 0x400004)
+        device.my_arbwrite_u24_be(VCP_83_GET_1+19, 0x400004)
     else:
-        device.lg_arbwrite_u24_be(VCP_83_GET_1+12, 0x186115) # bn.sbz     0x15(r1),r3
-        device.lg_arbwrite_u16_be(VCP_83_GET_1+15, 0x8001)
-        device.lg_arbwrite_u16_be(VCP_83_GET_1+17, 0x8001)
-        device.lg_arbwrite_u24_be(VCP_83_GET_1+19, 0x400004)
+        device.my_arbwrite_u24_be(VCP_83_GET_1+12, 0x186115) # bn.sbz     0x15(r1),r3
+        device.my_arbwrite_u16_be(VCP_83_GET_1+15, 0x8001)
+        device.my_arbwrite_u16_be(VCP_83_GET_1+17, 0x8001)
+        device.my_arbwrite_u24_be(VCP_83_GET_1+19, 0x400004)
         
 
 
@@ -582,60 +666,119 @@ switchD_0029eca1::caseD_83                      XREF[2]:     0029eca1(j), 003a3f
     else:
         return 0 if val == 0x55 else 1
 
-def run_patches():
-    #
-    # Patch VCP 0xD7 setter to just send raw split values:
-    #
+def patch_atomic_read():
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+0,  0x106a04) # bn.lbz    r3,0x4(r10)
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+3,  0x4c6340) # bn.slli   r3,r3,8
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+6,  0x108a05) # bn.lbz    r4,0x5(r10)
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+9,  0x446325) # bn.or     r3,r3,r4
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+12, 0x4c6340) # bn.slli   r3,r3,8
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+15, 0x108a06) # bn.lbz    r4,0x6(r10)
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+18, 0x446325) # bn.or     r3,r3,r4
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+21, 0x4c6340) # bn.slli   r3,r3,8
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+24, 0x108a07) # bn.lbz    r4,0x7(r10)
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+27, 0x446325) # bn.or     r3,r3,r4
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+30, 0x106300) # bn.lbz    r3,0(r3)
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+33, 0x187201) # bn.sbz    0x1(r18),r3
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+36, 0x506082) # bn.ori    r3,r0,0x82
+    device.lg_arbwrite_u24_be(DDC_50_D1_1+39, 0x2FFB0E) # bn.j      LAB_0029777a
+
+def patch_atomic_write():
+    device.lg_arbwrite_u24_be(DDC_50_D5_1+0,  0x106a04) # bn.lbz    r3,0x4(r10)
+    device.lg_arbwrite_u24_be(DDC_50_D5_1+3,  0x4c6340) # bn.slli   r3,r3,8
+    device.lg_arbwrite_u24_be(DDC_50_D5_1+6,  0x108a05) # bn.lbz    r4,0x5(r10)
+    device.lg_arbwrite_u24_be(DDC_50_D5_1+9,  0x446325) # bn.or     r3,r3,r4
+    device.lg_arbwrite_u24_be(DDC_50_D5_1+12, 0x4c6340) # bn.slli   r3,r3,8
+    device.lg_arbwrite_u24_be(DDC_50_D5_1+15, 0x108a06) # bn.lbz    r4,0x6(r10)
+    device.lg_arbwrite_u24_be(DDC_50_D5_1+18, 0x446325) # bn.or     r3,r3,r4
+    device.lg_arbwrite_u24_be(DDC_50_D5_1+21, 0x4c6340) # bn.slli   r3,r3,8
+    device.lg_arbwrite_u24_be(DDC_50_D5_1+24, 0x108a07) # bn.lbz    r4,0x7(r10)
+    device.lg_arbwrite_u24_be(DDC_50_D5_1+27, 0x446325) # bn.or     r3,r3,r4
+    device.lg_arbwrite_u24_be(DDC_50_D5_1+30, 0x108a08) # bn.lbz    r4,0x8(r10)
+    device.lg_arbwrite_u24_be(DDC_50_D5_1+33, 0x188300) # bn.sbz    0(r3),r4
+    device.lg_arbwrite_u24_be(DDC_50_D5_1+36, 0x506082) # bn.ori    r3,r0,0x82
+    device.lg_arbwrite_u16_be(DDC_50_D5_1+39, 0x935a) # bn.j      LAB_0029777a
+
+def modify_50_switchtable_case(idx, val):
+    if idx < 0x10:
+        return
+    device.my_arbwrite_u32(DDC_50_SWITCHTABLE+((idx-0x10)*4), val)
+
+def patch_d7_pbp_pip():
     # We keep the 0x0 extra bits, but make it the same as 0x1 was before
-    device.lg_arbwrite_u32_be(VCP_D7_SET_1+0, 0xd140326a) # bg.beqi    r10,0x0,LAB_002ee2ae
+    device.my_arbwrite_u32_be(VCP_D7_SET_1+0, 0xd140326a) # bg.beqi    r10,0x0,LAB_002ee2ae
 
     # We make 0xe apply sound swaps
-    device.lg_arbwrite_u32_be(VCP_D7_SET_1+4, 0xd14e3332) # bg.beqi    r10,0xe,LAB_002ee2cb
+    device.my_arbwrite_u32_be(VCP_D7_SET_1+4, 0xd14e3332) # bg.beqi    r10,0xe,LAB_002ee2cb
 
     # And everything else is just directly raw
-    device.lg_arbwrite_u32_be(VCP_D7_SET_1+8, 0xe4000cfb) # bg.j LAB_002ee2e6
-    device.lg_arbwrite_u16_be(VCP_D7_SET_2+0, 0x8001) # bt.nop
-    device.lg_arbwrite_u16_be(VCP_D7_SET_2+2, 0x8001) # bt.nop
+    device.my_arbwrite_u32_be(VCP_D7_SET_1+8, 0xe4000cfb) # bg.j LAB_002ee2e6
+    device.my_arbwrite_u16_be(VCP_D7_SET_2+0, 0x8001) # bt.nop
+    device.my_arbwrite_u16_be(VCP_D7_SET_2+2, 0x8001) # bt.nop
 
-    device.lg_arbwrite_u16_be(VCP_D7_SET_2+0, 0x8001) # bt.nop
-    device.lg_arbwrite_u16_be(VCP_D7_SET_2+2, 0x8001) # bt.nop
-    device.lg_arbwrite_u16_be(VCP_D7_SET_2+4, 0x8001) # bt.nop
+    device.my_arbwrite_u16_be(VCP_D7_SET_2+0, 0x8001) # bt.nop
+    device.my_arbwrite_u16_be(VCP_D7_SET_2+2, 0x8001) # bt.nop
+    device.my_arbwrite_u16_be(VCP_D7_SET_2+4, 0x8001) # bt.nop
 
     # Use the raw value
-    device.lg_arbwrite_u16_be(VCP_D7_SET_3+0, 0x886a) # bt.mov r3,r10
+    device.my_arbwrite_u16_be(VCP_D7_SET_3+0, 0x886a) # bt.mov r3,r10
 
     # 0xE sound swap stuff
-    device.lg_arbwrite_u32_be(VCP_D7_SET_4+0, 0xe7f7ec0e) # bg.jal     get_which_monitor_has_sound 
-    device.lg_arbwrite_u32_be(VCP_D7_SET_4+4, 0xe7f826f4) # bg.jal     sets_which_monitor_has_sound
-    device.lg_arbwrite_u16_be(VCP_D7_SET_4+8, 0x8001) # bt.nop
-    device.lg_arbwrite_u16_be(VCP_D7_SET_4+10, 0x8001) # bt.nop
-    device.lg_arbwrite_u16_be(VCP_D7_SET_4+12, 0x8001) # bt.nop
-    device.lg_arbwrite_u16_be(VCP_D7_SET_4+14, 0x8001) # bt.nop
-    device.lg_arbwrite_u16_be(VCP_D7_SET_4+16, 0x8001) # bt.nop
-    device.lg_arbwrite_u16_be(VCP_D7_SET_4+18, 0x8001) # bt.nop
-    device.lg_arbwrite_u16_be(VCP_D7_SET_4+20, 0x8001) # bt.nop
-    device.lg_arbwrite_u16_be(VCP_D7_SET_4+22, 0x8001) # bt.nop
+    device.my_arbwrite_u32_be(VCP_D7_SET_4+0,  0xe7f7ec0e) # bg.jal     get_which_monitor_has_sound 
+    device.my_arbwrite_u32_be(VCP_D7_SET_4+4,  0xe7f826f4) # bg.jal     sets_which_monitor_has_sound
+    device.my_arbwrite_u16_be(VCP_D7_SET_4+8,  0x8001) # bt.nop
+    device.my_arbwrite_u16_be(VCP_D7_SET_4+10, 0x8001) # bt.nop
+    device.my_arbwrite_u16_be(VCP_D7_SET_4+12, 0x8001) # bt.nop
+    device.my_arbwrite_u16_be(VCP_D7_SET_4+14, 0x8001) # bt.nop
+    device.my_arbwrite_u16_be(VCP_D7_SET_4+16, 0x8001) # bt.nop
+    device.my_arbwrite_u16_be(VCP_D7_SET_4+18, 0x8001) # bt.nop
+    device.my_arbwrite_u16_be(VCP_D7_SET_4+20, 0x8001) # bt.nop
+    device.my_arbwrite_u16_be(VCP_D7_SET_4+22, 0x8001) # bt.nop
 
     # Make 0x0 the same as 0x1 was before
-    device.lg_arbwrite_u16_be(VCP_D7_SET_5+0, 0x9860) # bt.movi r3,0
-
-    #device.lg_arbwrite_u24_be(VCP_D7_SET_4+10, 0x400004) # bt.nop
-
+    device.my_arbwrite_u16_be(VCP_D7_SET_5+0,  0x9860) # bt.movi r3,0
 
     #
     # Patch VCP 0xD7 getter to just send raw split values
     #
-    device.lg_arbwrite_u16_be(VCP_D7_GET_1+0, 0x8001) # bt.nop
-    device.lg_arbwrite_u16_be(VCP_D7_GET_1+2, 0x8001) # bt.nop
-    device.lg_arbwrite_u16_be(VCP_D7_GET_1+12, 0x8883) # bt.mov r4,r3
+    device.my_arbwrite_u16_be(VCP_D7_GET_1+0,  0x8001) # bt.nop
+    device.my_arbwrite_u16_be(VCP_D7_GET_1+2,  0x8001) # bt.nop
+    device.my_arbwrite_u16_be(VCP_D7_GET_1+12, 0x8883) # bt.mov r4,r3
+
+def run_patches():
+
+    if device.lg_arbread_u16_be(DDC_50_D5_1+41) != 0x55aa:
+        #
+        # Patch DDC2AB (0x50) 0xD1 to be an atomic u8 read
+        # This is required to prevent random crashes when reading/writing, if the
+        # LG arbwrite pointer randomly changes or is reset to 0 due to sleep.
+        #
+        while device.lg_arbread_u16_be(DDC_50_D1_1+0) != 0x106a:
+            for i in range(0, 2):
+                patch_atomic_read()
+
+        #
+        # Patch DDC2AB (0x50) 0xD5 to be an atomic u8 write
+        # This is required to prevent random crashes when reading/writing, if the
+        # LG arbwrite pointer randomly changes or is reset to 0 due to sleep.
+        #
+        while device.lg_arbread_u16_be(DDC_50_D5_1+41) != 0x55aa:
+            for i in range(0, 2):
+                patch_atomic_write()
+
+            device.my_arbwrite_u16_be(DDC_50_D5_1+41, 0x55aa)
+
+    # These got clobbered by the patches.
+    modify_50_switchtable_case(0x68, DDC_50_DEFAULT_CASE)
+    modify_50_switchtable_case(0x69, DDC_50_DEFAULT_CASE)
+    modify_50_switchtable_case(0x75, DDC_50_DEFAULT_CASE)
+    modify_50_switchtable_case(0xd6, DDC_50_DEFAULT_CASE)
+    modify_50_switchtable_case(0xd7, DDC_50_DEFAULT_CASE)
 
     #
-    # Patch VCP 0x52 getter to read the same value as the arbwrite
+    # Patch VCP 0xD7 setter to just send raw split values:
     #
-    device.lg_arbwrite_u24_be(VCP_52_GET_2+0, 0x0c0104) # bn.sw      0x4(r1),r0,
-    device.lg_arbwrite_u32_be(VCP_52_GET_1+0, 0xece7b5c2) # bg.lwz     r7,-0x4a40(r7)
-    device.lg_arbwrite_u24_be(VCP_52_GET_1+4, 0x10e700) # bg.lbz     r7,0(r7)
-    device.lg_arbwrite_u24_be(VCP_52_GET_1+7, 0x18e115) # bn.sbz     0x15(r1),r7
+    patch_d7_pbp_pip()
+
 
 if __name__ == "__main__":
     device = LgUsbMonitorControl()
@@ -650,9 +793,11 @@ if __name__ == "__main__":
         print("Model:", model_str)
         exit(1)
 
-    # Reset just to make sure the monitor is in a clean state
-    device.lg_reset_monitor()
-    time.sleep(1)
+    # Reset just to make sure the monitor is in a clean state,
+    # unless we detect our atomic arbread working
+    if device.lg_arbread_u16_be(DDC_50_D5_1+41) != 0x55aa:
+        device.lg_reset_monitor()
+        time.sleep(1)
 
     # Sometimes writes get dropped...
     # The CC commands do not return *anything* so there's no way to know
@@ -660,18 +805,24 @@ if __name__ == "__main__":
     for i in range(0, 10):
         run_patches()
 
-        val = device.lg_arbread_u32_be(VCP_52_GET_1)
-        if val == 0xece7b5c2:
+        val = device.lg_arbread_u32_be(VCP_D7_SET_1+0)
+        if val == 0xd140326a:
             print ("Arbread test successful.")
             break
         else:
-            print ("Arbread test failed...", hex(val), "!=", hex(0xece7b5c2))
+            print ("Arbread test failed...", hex(val), "!=", hex(0xd140326a))
             if i == 9:
                 print ("Exiting.")
                 device.lg_reset_monitor()
                 exit(1)
             print ("Trying again...")
 
+    # 1 = input?
+    # 2 = accessibility menu
+    # 3 = ?
+    # 4 = ?
+    # 5 = service menu?
+    #device.my_arbwrite_u32_be(0x0026561a, 0xffffffff)
     #print(hex(device.lg_arbread_u32(0x0042ac30)))
 
     '''
@@ -702,7 +853,7 @@ if __name__ == "__main__":
         if data_1[i] != data_2[i]:
             print(hex(i) + ": " + hex(data_1[i]) + " " + hex(data_2[i]))
 
-    #device.lg_arbwrite_u8(SPLIT_5_ADDR, 0x60 | 0x2)
+    #device.my_arbwrite_u8(SPLIT_5_ADDR, 0x60 | 0x2)
     '''
 
     global_namespace_timer = rumps.Timer(fix_displays_and_mouse, 4)
@@ -710,5 +861,5 @@ if __name__ == "__main__":
     AwesomeStatusBarApp("🦊").run()
 
     
-    #device.lg_arbwrite_str16(QUICK_SETTINGS_ADDR, "lol")
-    #device.lg_arbwrite_str16(QUICK_SETTINGS_ADDR_2, "*hacker voice* I'm in")
+    #device.my_arbwrite_str16(QUICK_SETTINGS_ADDR, "lol")
+    #device.my_arbwrite_str16(QUICK_SETTINGS_ADDR_2, "*hacker voice* I'm in")
