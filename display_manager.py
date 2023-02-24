@@ -7,6 +7,7 @@ import os
 
 LG_MONITOR_CONTROL_VID = 0x043E
 LG_MONITOR_CONTROL_PID = 0x9A39
+LG_MONITOR_DDCCI_I2C_ADDR = 0x37
 
 # 0 - no split
 # 1 - left-right half and half
@@ -134,6 +135,11 @@ class LgUsbMonitorControl:
 
     def fix_connection(self):
         self.init_usb()
+
+        # Drain anything waiting?
+        for i in range(0,10):
+            self.read_raw(0x40, 10)
+
         run_patches()
 
     def send_raw(self, pkt):
@@ -146,97 +152,32 @@ class LgUsbMonitorControl:
             print ("Failed to write", e)
             self.fix_connection()
 
-    def read_raw(self, amt=0x40):
+    def read_raw(self, amt=0x40, timeout=200):
         if not self.has_usb:
             return
 
         try:
-            return bytes(self.dev.read(amt, 200))
+            return bytes(self.dev.read(amt, timeout))
         except Exception as e:
             print ("Failed to read", e)
             self.fix_connection()
 
         return []
 
-    def wrap_send_vcp(self, data):
-        wrapped = [0x08, 0x01, 0x55, 0x03, 0x00, 0x00, 0x03, 0x37]
-        
-        data = [0x51] + data
-        data = msg_add_checksum_2(data)
-        wrapped[4] += len(data)
+    def send_to_i2c(self, addr, data):
+        wrapped = [0x08, 0x01, 0x55, 0x03, len(data), 0x00, 0x03]
+        wrapped += [addr]
         wrapped += data
-        
         #hex_dump(wrapped)
+        self.send_raw(wrapped)
 
-        self.send_raw(wrapped)
-        wrapped[1] = 0x02
-        wrapped[3] = 0x04
-        wrapped[4] = 0x0b
-        wrapped[6] = 0x0b
-        self.send_raw(wrapped)
+    def begin_read_from_i2c(self, addr, to_read):
+        wrapped = [0x08, 0x02, 0x55, 0x04, to_read, 0x00, 0xb]
+        wrapped += [addr]
         #hex_dump(wrapped)
-
-        return wrapped
-    
-    def wrap_send_vcp_2(self, data, expected_back=0xb):
-        wrapped = [0x08, 0x01, 0x55, 0x03, 0x00, 0x00, 0x03, 0x37]
-        
-        data_len = len(data)
-        data = [0x80 | data_len] + data
-        data = [0x51] + data
-        data = msg_add_checksum_2(data)
-        wrapped[4] += len(data)
-        wrapped += data
-        
-        #hex_dump(wrapped)
-
         self.send_raw(wrapped)
-        wrapped[1] = 0x02
-        wrapped[3] = 0x04
-        wrapped[4] = expected_back
-        wrapped[6] = 0x0b
-        self.send_raw(wrapped)
-        #hex_dump(wrapped)
 
-        return wrapped
-    
-    def wrap_send_vcp_3(self, data, expected_back=0xb):
-        wrapped = [0x08, 0x01, 0x55, 0x03, 0x00, 0x00, 0x03, 0x37]
-        
-        data_len = len(data)
-        data = [0x80 | data_len] + data
-        data = [0x50] + data
-        data = msg_add_checksum_2(data)
-        wrapped[4] += len(data)
-        wrapped += data
-        
-        #hex_dump(wrapped)
-
-        self.send_raw(wrapped)
-        wrapped[1] = 0x02
-        wrapped[3] = 0x04
-        wrapped[4] = expected_back
-        wrapped[6] = 0x0b
-        self.send_raw(wrapped)
-        #hex_dump(wrapped)
-
-        return wrapped
-    
-    def wrap_send_vcp_4(self, data, expected_back=0xb, which_device=0x51):
-        wrapped = [0x08, 0x01, 0x55, 0x03, 0x00, 0x00, 0x03, 0x37]
-        
-        data_len = len(data)
-        data = [0x00 | data_len] + data
-        data = [which_device] + data
-        data = msg_add_checksum_2(data)
-        wrapped[4] += len(data)
-        wrapped += data
-        
-        wrapped += [0]*(0x40-len(wrapped))
-        
-        #hex_dump(wrapped)
-
-        self.send_raw(wrapped)
+    def read_from_i2c(self, addr, expected_back):
         data = bytes()
 
         if expected_back <= 0:
@@ -248,11 +189,7 @@ class LgUsbMonitorControl:
             to_read = 0x10
             if to_read > needed:
                 to_read = needed
-            wrapped[1] = 0x02
-            wrapped[3] = 0x04
-            wrapped[4] = to_read
-            wrapped[6] = 0x0b
-            self.send_raw(wrapped)
+            self.begin_read_from_i2c(addr, to_read)
         
             data_tmp = self.read_raw(0x100)
 
@@ -263,122 +200,114 @@ class LgUsbMonitorControl:
 
         return data
     
-    def wrap_send_vcp_alt(self, data, sum):
-        wrapped = [0x08, 0x01, 0x55, 0x03, 0x00, 0x00, 0x03, 0x37]
+    def wrap_send_vcp_2(self, data, expected_back=0xb):
+        return self.wrap_send_vcp_4(data, expected_back, 0x51)
+    
+    def wrap_send_vcp_3(self, data, expected_back=0xb):
+        return self.wrap_send_vcp_4(data, expected_back, 0x50)
+    
+    def wrap_send_vcp_4(self, data, expected_back=0xb, which_device=0x51):
+        data_len = len(data)
+        data = [0x00 | data_len] + data
+        data = [which_device] + data
+        data = msg_add_checksum_2(data)
+
+        self.send_to_i2c(LG_MONITOR_DDCCI_I2C_ADDR, data)
         
-        data = [0x51] + data
-        data = data + [sum]
-        wrapped[4] += len(data)
-        wrapped += data
-
-        self.send_raw(wrapped)
-        wrapped[1] = 0x02
-        wrapped[3] = 0x04
-        wrapped[4] = 0x0b
-        wrapped[6] = 0x0b
-        self.send_raw(wrapped)
-
-        return wrapped
-
+        return self.read_from_i2c(LG_MONITOR_DDCCI_I2C_ADDR, expected_back)
+    
     def get_vcp(self, idx):
         for i in range(0, 1000):
         
-            self.wrap_send_vcp_2([0x01, idx])
+            data = self.wrap_send_vcp_2([0x01, idx])
             
-            data = self.read_raw()
             #hex_dump(data)
-            if (len(data) < 8):
+            if (len(data) < 0xb):
                 hex_dump(data)
                 continue
             
-            data_len = data[5] & 0x7F
-            if data_len > len(data)-5-2:
-                data_len =len(data)-5-2
+            data_len = data[1] & 0x7F
+            if data_len > len(data)-1-2:
+                data_len =len(data)-1-2
 
-            test = msg_checksum(data[5:5+data_len+2])
+            test = msg_checksum(data[1:1+data_len+2])
 
-            if (test == 0 and data[6] == 2 and data[8] == idx):
-                return data[13] | data[12] << 8
+            if (test == 0 and data[2] == 2 and data[4] == idx):
+                return data[9] | data[8] << 8
             time.sleep(0.1)
         return -1
     
     def set_vcp(self, idx, val, val2=0):
         for i in range(0, 10):
         
-            self.wrap_send_vcp_2([0x03, idx,(val >> 8) & 0xFF,(val >> 0) & 0xFF])
+            data = self.wrap_send_vcp_2([0x03, idx,(val >> 8) & 0xFF,(val >> 0) & 0xFF])
             
-            data = self.read_raw()
             #hex_dump(data)
-            if (len(data) < 8):
+            if (len(data) < 0xb):
                 hex_dump(data)
                 continue
             
-            data_len = data[5] & 0x7F
-            if data_len > len(data)-5-2:
-                data_len =len(data)-5-2
+            data_len = data[1] & 0x7F
+            if data_len > len(data)-1-2:
+                data_len =len(data)-1-2
 
-            test = msg_checksum(data[5:5+data_len+2])
+            test = msg_checksum(data[1:1+data_len+2])
 
-            if (test == 0 and data[8] == idx):
-                return data[13]
+            if (test == 0 and data[4] == idx):
+                return data[9]
             time.sleep(0.1)
         return -1
 
     def lg_special(self, idx, val):
         for i in range(0, 10):
 
-            self.wrap_send_vcp_3([0x03,idx,(val >> 8) & 0xFF, val & 0xFF], 0x26)
+            data = self.wrap_send_vcp_3([0x03,idx,(val >> 8) & 0xFF, val & 0xFF], 0x26)
 
-            data = device.read_raw()
+            device.read_raw()
             #hex_dump(data)
-            if (len(data) < 8):
+            if (len(data) < 0x26):
                 #hex_dump(data)
                 continue
             
-            data_len = data[5] & 0x7F
-            if data_len > len(data)-5-2:
-                data_len =len(data)-5-2
+            data_len = data[1] & 0x7F
+            if data_len > len(data)-1-2:
+                data_len = len(data)-1-2
 
-            if data[2] == 0x55:
-                return data
+            return data
         return bytes([])
 
     def lg_special_u32(self, idx, val):
         for i in range(0, 10):
 
-            self.wrap_send_vcp_3(list(struct.pack("<BB", 0x03, idx))+list(struct.pack(">L",val)), 0x26)
+            data = self.wrap_send_vcp_3(list(struct.pack("<BB", 0x03, idx))+list(struct.pack(">L",val)), 0x26)
 
-            data = device.read_raw()
             #hex_dump(data)
-            if (len(data) < 8):
+            if (len(data) < 0x26):
                 hex_dump(data)
                 continue
             
-            data_len = data[5] & 0x7F
-            if data_len > len(data)-5-2:
-                data_len =len(data)-5-2
+            data_len = data[1] & 0x7F
+            if data_len > len(data)-1-2:
+                data_len = len(data)-1-2
 
-            if data[2] == 0x55:
-                return data
+            return data
         return bytes([0,0,0,0,0,0,0,0,0,0])
 
     def lg_special_u32_u8(self, idx, val, val2):
         for i in range(0, 10):
 
-            self.wrap_send_vcp_3(list(struct.pack("<BB", 0x03, idx))+list(struct.pack(">LB",val,val2)), 0x26)
+            data = self.wrap_send_vcp_3(list(struct.pack("<BB", 0x03, idx))+list(struct.pack(">LB",val,val2)), 0x26)
 
-            data = device.read_raw()
             #hex_dump(data)
-            if (len(data) < 8):
+            if (len(data) < 0x26):
                 hex_dump(data)
                 continue
             
-            data_len = data[5] & 0x7F
-            if data_len > len(data)-5-2:
-                data_len =len(data)-5-2
+            data_len = data[1] & 0x7F
+            if data_len > len(data)-1-2:
+                data_len =len(data)-1-2
 
-            if data[2] == 0x55:
-                return data
+            return data
         return bytes([0,0,0,0,0,0,0,0,0,0])
 
     def lg_special_f3(self, val):
@@ -466,10 +395,10 @@ class LgUsbMonitorControl:
 
     def lg_arbread_u8(self, addr):
         data = device.lg_special_u32(0xd1, addr)
-        val = data[5]
-        while data[4] != 0x82:
+        val = data[1]
+        while data[0] != 0x82:
             data = device.lg_special_u32(0xd1, addr)
-            val = data[5]
+            val = data[1]
         return val
 
     def lg_arbread_data(self, addr, data_len):
@@ -531,6 +460,11 @@ class LgUsbMonitorControl:
 def fix_displays_and_mouse(sender):
     os.system("fix_displays_and_mouse.sh")
     device.get_vcp(0x10) # heartbeat to trigger USB fixups
+
+    for i in range(0, 0x10):
+        print (hex(i), hex(device.lg_arbread_u32(0x005445d4+i*0x24)))
+    print (hex(device.lg_arbread_u32(0x00544a5c)))
+    
 
     # Sometimes writes get dropped...
     # The CC commands do not return *anything* so there's no way to know
@@ -656,8 +590,8 @@ switchD_0029eca1::caseD_83                      XREF[2]:     0029eca1(j), 003a3f
 
 
     # Attempt to get the caches to stahp
-    scalar_fw_version = device.lg_special(0xc9,0)[4:4+3]
-    model_str = bytes(device.lg_special(0xca,0)[4:4+7])
+    scalar_fw_version = device.lg_special(0xc9,0)[0:0+3]
+    model_str = bytes(device.lg_special(0xca,0)[0:0+7])
 
     val = device.get_vcp(0x83)
 
@@ -779,13 +713,33 @@ def run_patches():
     #
     patch_d7_pbp_pip()
 
+    # Unlock all of the PIP/PBP menu options that are useful (not the vertical 3-ways)
+    device.my_arbwrite_u24_be(0x002951dc, 0x1c6000 | (0x3 & 0xFF)) # ori r3,r0,val
+    device.my_arbwrite_u24_be(0x00295c02, 0x1c6000 | (0x0 & 0xFF)) # ori r3,r0,val
+    device.my_arbwrite_u24_be(0x00295c28, 0x1c6000 | (0x0 & 0xFF)) # ori r3,r0,val
+
+    # disp overclock?
+    #device.my_arbwrite_u24_be(0x002957a5, 0x1c6000 | (0x0 & 0xFF)) # ori r3,r0,val
+    #device.my_arbwrite_u24_be(0x002957d3, 0x1c6000 | (0x0 & 0xFF)) # ori r3,r0,val
+    
+
+    # Choose different tool menus
+    #device.my_arbwrite_u24_be(0x002d2487, 0x1c8000 | (0x8 & 0xFF))
+
+    # Override PBP menu to any other menu
+    #device.my_arbwrite_u8(0x002b9155, 0xa9)
+
+    
+
+    #device.my_arbwrite_u16_be(0x002bc283, 0x98eb);
+
 
 if __name__ == "__main__":
     device = LgUsbMonitorControl()
     device.init_usb()
 
-    scalar_fw_version = device.lg_special(0xc9,0)[4:4+3]
-    model_str = bytes(device.lg_special(0xca,0)[4:4+7])
+    scalar_fw_version = device.lg_special(0xc9,0)[0:0+3]
+    model_str = bytes(device.lg_special(0xca,0)[0:0+7])
 
     if scalar_fw_version != bytes([0x82, 0x03, 0x30]) or model_str != b"28MQ780":
         print("Please read the README and don't run random mempoke scripts on your monitor.")
@@ -796,7 +750,7 @@ if __name__ == "__main__":
     # Reset just to make sure the monitor is in a clean state,
     # unless we detect our atomic arbread working
     if device.lg_arbread_u16_be(DDC_50_D5_1+41) != 0x55aa:
-        device.lg_reset_monitor()
+        #device.lg_reset_monitor()
         time.sleep(1)
 
     # Sometimes writes get dropped...
@@ -824,6 +778,7 @@ if __name__ == "__main__":
     # 5 = service menu?
     #device.my_arbwrite_u32_be(0x0026561a, 0xffffffff)
     #print(hex(device.lg_arbread_u32(0x0042ac30)))
+    #device.my_arbwrite_u16_be(0x002daed3, 0x9000)
 
     '''
     for i in range(0, 0x2):
